@@ -1,191 +1,269 @@
-QuantProject – HK Stock Strategy Backtester
+# QuantProject — HK Stock Backtesting Framework
 
-A quantitative trading toolkit for Hong Kong equities.
-It covers data update → signal generation → backtesting (stock + options) → performance analysis & plotting.
+C++ portfolio backtester for Hong Kong equities, with Futu OpenAPI data ingestion and Python plotting.
 
-
-
-Project Structure
-
-QuantProject/
-├── monitorCodeList.csv          # List of HK stock codes to track (e.g. HK.00135)
-├── d_history/                   # Daily K-line + indicators (HK00135.csv style)
-├── w_history/                   # Weekly K-line + indicators
-├── testResult/                  # Stock-only backtest outputs
-├── AggressiceFolder/            # Posterior-probability backtest outputs
-│
-├── dailyUpdate.py               # Fetch / append daily & weekly data via Futu OpenAPI
-├── backtester.cpp               # Original multi-stock backtester (C++)
-├── AggressiveTester.cpp         # Applied some probability that I've learnt
-│
-├── cumulative.py                # Cumulative equity plots (stock / option / combined)
-└── singlePlot.py                # Interactive single-stock detailed chart
-
-File naming convention
-History and result files use the no-dot form: HK00135.csv, HK00135_backtest.csv.
-
-
-
-**File naming convention**  
-History and result files use the no-dot form: `HK00135.csv`, `HK00135_backtest.csv`.
+**Current strategy (in `backTester.cpp`):** HK Momentum Trend V4-LS — long stock on EMA stack + ADX + Bollinger mid, optional call overlay, HSI regime filter for new entries only.
 
 ---
 
-## 1. Data Update (`dailyUpdate.py`)
+## Directory layout
 
-Pulls daily & weekly K-lines from **Futu OpenAPI** and maintains indicator columns.
+```text
+QuantProject/
+├── monitorCodeList.csv      # universe (one code per line, e.g. HK.00700)
+├── d_history/               # daily OHLCV CSVs  (HK00700.csv, HSI.csv, ...)
+├── w_history/               # weekly OHLCV CSVs
+├── testResult/              # backtest outputs (per-stock CSVs, portfolio equity, trades)
+├── correlationResult/       # pair / correlation strategy outputs
+│
+├── backTester.cpp           # main portfolio engine (edit strategy here)
+├── summarizeResults.cpp     # aggregate testResult/*_backtest.csv → summary CSV
+├── sentimentMomentum.cpp    # alternate strategy binary
+├── correlationTracker.cpp   # rolling correlation tracker
+├── correlationBacktester.cpp
+│
+├── fetch_history.py         # pull daily + weekly bars from Futu OpenD
+├── plotResults.py           # equity / signal plots from testResult
+├── plotCorrelation.py
+├── Makefile
+└── README.md
+```
 
-**Requirements**
-- Futu OpenD running (`127.0.0.1:11111`)
-- `pip install futu-api pandas numpy`
+---
 
-**Indicators computed**
-| Indicator | Parameters |
-|-----------|------------|
-| EMA       | 5, 13 |
-| KDJ       | 9, 3, 3 |
-| Bollinger | 40-period, 2σ |
+## Requirements
 
-**Daily append (recommended)**
+| Component | Notes |
+|-----------|--------|
+| **C++17** | `g++` with `-std=c++17` |
+| **Python 3** | `pandas`, `numpy`, `matplotlib` |
+| **Futu OpenD** | for data updates only (`futu-api`) |
+
 ```bash
-python dailyUpdate.py \
+# Python deps
+pip install pandas numpy matplotlib futu-api
+```
+
+---
+
+## 1. Universe & data
+
+### Stock list
+
+`monitorCodeList.csv` — one Futu-style code per line:
+
+```text
+code
+HK.00700
+HK.09988
+HK.00100
+```
+
+Typical screen (via Futu filter): large market cap, lot price band, recent amplitude.
+
+### Download / refresh history
+
+OpenD must be running (`127.0.0.1:11111`).
+
+**First-time full download (~400 calendar days):**
+
+```bash
+python3 fetch_history.py \
   --list monitorCodeList.csv \
-  --daily-dir  d_history \
+  --daily-dir d_history \
+  --weekly-dir w_history \
+  --full --days 400
+```
+
+**Daily append (recommended cron / morning job):**
+
+```bash
+python3 fetch_history.py \
+  --list monitorCodeList.csv \
+  --daily-dir d_history \
   --weekly-dir w_history \
   --days 60
 ```
 
-- Only updates **existing** `HKxxxxx.csv` files (does not create new ones)
-- Appends new daily bars
-- Updates the current (possibly incomplete) weekly bar
+**Single name:**
 
-**Full refresh**
 ```bash
-python daily_update.py --daily-dir d_history --weekly-dir w_history --days 400 --full
+python3 fetch_history.py --codes HK.00700 --full --days 400
+```
+
+Files are saved as `HK00700.csv` (dots removed). Optional indicators (EMA5/13, KDJ, Bollinger 40,2) are written into the CSV.
+
+**HSI benchmark:** place index daily bars at `d_history/HSI.csv` (or set `HSI_PATH` in `backTester.cpp`). Columns should include `time_key,open,high,low,close,volume`.
+
+---
+
+## 2. Build
+
+```bash
+make              # all C++ binaries
+make backtester   # main engine only
+```
+
+Or manually:
+
+```bash
+g++ -O2 -std=c++17 -Wall backTester.cpp -o backtester
+g++ -O2 -std=c++17 -Wall summarizeResults.cpp -o summarizeResults
 ```
 
 ---
 
-## 2. Original Strategy Backtester (`backtester.cpp`)
+## 3. Run backtest
 
-Long-only strategy using Daily Bollinger regime + KDJ + EMA.
-
-### Signal Rules
-
-| Regime | Condition | Entry | Exit |
-|--------|-----------|-------|------|
-| **Bull** | Close > Daily BB mid | Strict KDJ golden cross (K & J both cross above D) | KDJ death cross |
-| **Bear** | Close < Daily BB mid | EMA5 crosses above EMA13 | KDJ death cross |
-
-- Hard **stop-loss: 3%**
-- No immediate exit on “price below EMA5”
-- Weekly Bollinger is **ignored** (daily only)
-
-### Strict KDJ Cross
-
-```
-Golden:  prev D ≥ K and D ≥ J   →   curr K > D and J > D
-Death :  prev K ≥ D and J ≥ D   →   curr K < D and J < D
-```
-
-### Compile & Run
 ```bash
-g++ -std=c++17 -O2 -o backtester backtester.cpp
 ./backtester
+# or
+make summarize    # runs backtester then summarizeResults
 ```
 
-Paths are configured near the top of `main()` (list / d_history / w_history / output folder).
+### Outputs (`testResult/`)
+
+| File | Description |
+|------|-------------|
+| `PORTFOLIO_equity.csv` | Daily portfolio equity, cash, stock/call/put value, position counts |
+| `trades.csv` | Every closed trade: code, type, dates, PnL%, MFE, MAE, exit reason |
+| `metrics.txt` | CAGR, Sharpe, Sortino, max DD, win rate, profit factor, etc. |
+| `summary_all_stocks.csv` | Per-code trade count / sum PnL (also written by `summarizeResults`) |
+| `HK*****_backtest.csv` | Per-stock skeleton (compatible with older plot scripts) |
+
+Terminal also prints top/bottom trades and exit-reason breakdown.
+
+### Config knobs (`backTester.cpp`)
+
+Near the top of the file:
+
+```cpp
+const string LIST_PATH = "monitorCodeList.csv";
+const string D_DIR     = "d_history";
+const string OUT_DIR   = "testResult";
+const string HSI_PATH  = "d_history/HSI.csv";
+
+const double INIT_CAPITAL      = 1'000'000.0;
+const double RISK_PER_TRADE    = 0.015;   // 1.5% risk per trade
+const double MAX_PER_STOCK     = 0.12;
+const double MAX_PORT_EXPOSURE = 0.90;
+const int    MAX_LONGS         = 10;
+
+const double ADX_ENTRY         = 15.0;
+const double ATR_MULT          = 2.5;     // stop / trail distance
+const double HARD_LOSS         = 0.08;    // hard -8% stop
+const double BE_MFE            = 0.08;    // +8% → stop to entry
+// ... locks, options toggles, etc.
+```
+
+Change strategy logic in the same file, recompile, re-run. Output format is kept stable so `plotResults.py` and `summarizeResults` keep working.
 
 ---
 
-## 3. Aggressive Posterior Backtester
-
-Estimates **P(next bar up | current indicator state)** from recent history and trades on that probability.
-
-**State** is a discrete bucket of:
-- KDJ regime (oversold / overbought / K>D / K<D)
-- J extreme
-- Price vs Bollinger mid
-- EMA5 vs EMA13
-
-| Action | Rule |
-|--------|------|
-| Buy  | Posterior ≥ entry threshold (default 0.55) |
-| Sell | Posterior ≤ exit threshold (default 0.45) **or** stop-loss **or** time-stop |
+## 4. Plot
 
 ```bash
-g++ -std=c++17 -O2 -o AggressiveTester AggressiveTester.cpp
-./AggressiveTester --daily-dir d_history --list monitorCodeList.csv \
-  --out testResult_aggressive --entry 0.55 --exit 0.45 --stop 0.03 --time-stop 8
+make plot
+# or
+python3 plotResults.py
 ```
 
-| Flag | Default | Meaning |
-|------|---------|---------|
-| `--stock-stop` | 0.03 | Stock hard stop |
-| `--opt-premium` | 0.05 | Call premium as % of spot |
-| `--opt-stop` | 0.50 | Exit after losing 50% of premium |
-| `--opt-alloc` | 0.30 | Capital weight on options |
-| `--opt-leverage` | 1.0 | Extra multiplier on option P&L |
+Plots land under `testResult/` (and `testResult/plots/` if configured). Portfolio equity curve uses `PORTFOLIO_equity.csv`.
 
----
-
-## 5. Plotting & Analysis
-
-### Cumulative returns (`cumulative.py`)
-Auto-detects result type:
-
-- **Stock-only** results → single equity curves + portfolio
-- **Options** results → stock / option / combined curves + overview
+Correlation strategy:
 
 ```bash
-python cumulative.py
+make plot-corr
 ```
 
-### Interactive single-stock chart (`singlePlot.py`)
+---
+
+## 5. Alternate strategies
+
+| Binary / source | Role |
+|-----------------|------|
+| `backTester.cpp` | **Active** portfolio engine (edit this for live experiments) |
+| `sentimentMomentum.cpp` | Sentiment / momentum variant; same CSV schema |
+| `correlationTracker.cpp` + `correlationBacktester.cpp` | Pair / mean-reversion correlation pipeline → `correlationResult/` |
+| `aggressiveTrend.cpp` | Earlier aggressive trend draft |
+
 ```bash
-python singlePlot.py
-# Enter directory → choose file by number / code → detailed 3-panel chart
+make summarize-sentiment   # build + run sentimentMomentum + summarize
 ```
+
+To try a new strategy: implement in a `.cpp` file, match the output columns of `*_backtest.csv` / `PORTFOLIO_equity.csv` / `trades.csv`, then either copy into `backTester.cpp` or add a Makefile target.
+
 ---
 
-## Typical Workflow
+## 6. Strategy snapshot (V4-LS family)
+
+**Long stock entry** (signal on close → fill next open):
+
+- EMA5 > EMA13 > EMA34  
+- ADX14 > entry threshold  
+- Close > Bollinger middle (20, 2)  
+- Optional: ATR% and HSI bull filter for *new* entries only  
+
+**Exits:**
+
+- Initial stop: entry − *k* × ATR  
+- Hard loss floor (e.g. −8%)  
+- Breakeven after MFE threshold  
+- ATR trailing stop after open gains  
+- Trend failure: EMA5 < EMA13 and close < EMA34  
+
+**Options (optional):** ATM call overlay on strong breakouts; puts disabled in recent versions after backtests showed large option drag under the simplified intrinsic model.
+
+**Portfolio rules:** risk-based sizing, max positions, max exposure, signal ranking when multiple names fire the same day.
+
+Iterate by changing constants and exit rules; keep trade frequency high if the universe is already pre-filtered (liquid, amplitude screen).
+
+---
+
+## 7. Typical workflow
 
 ```bash
-# 0. (optional) run filter.py to get the filtered stock and will write to monitorCodeList.csv
-python filter.py
+# Morning: refresh bars
+python3 fetch_history.py --list monitorCodeList.csv --days 60
 
-# 1. After market close – append today’s data
-python dailyUpdate.py
+# Backtest
+make summarize
 
-# 2. Run backtests
-./backtester
+# Charts
+make plot
 
-# 3. Analyse
-python cumulative.py testResult
-python singlePlot.py
+# Inspect
+less testResult/metrics.txt
+head testResult/trades.csv
 ```
 
 ---
 
-## Notes
+## 8. Makefile targets
 
-- History files must already exist under `d_history/` / `w_history/` with names like `HK00135.csv`. The updater will not create missing files unless `--full` is used.
-- Futu OpenD must be running before `dailyUpdate.py`.
-- All C++ tools require C++17.
-- The python version is 3.12
-- Python scripts need: `pandas`, `numpy`, `matplotlib` (and `futu-api` for data update).
-
-'''bash
-pip install pandas
-pip install numpy
-pip install matplotlib
-pip install futu-api
-'''
+| Target | Action |
+|--------|--------|
+| `make` / `make all` | Build all C++ binaries |
+| `make backtester` | Build main engine |
+| `make summarize` | Run backtester + summarizeResults |
+| `make summarize-sentiment` | Sentiment pipeline + summarize |
+| `make plot` | `plotResults.py` |
+| `make plot-corr` | Correlation plots |
+| `make clean` | Remove build artifacts / generated PNGs (see Makefile) |
 
 ---
 
-## Disclaimer
+## 9. Notes & caveats
 
-This project is for research and educational purposes only.  
-Past backtest results do not guarantee future performance. Trade at your own risk.
-This is a personal trading strategy practice
+- **Lookahead:** entries are signalled on day *T* close and filled at *T+1* open.  
+- **Option PnL** is a simplified intrinsic + fixed premium model — not a live options chain.  
+- **HSI path** must exist if the strategy uses a market regime filter; otherwise longs/puts may always be allowed.  
+- Rate-limit Futu requests (`--sleep`); OpenD must stay up during `fetch_history.py`.  
+- Past versions (dual-regime, V5–V7 breakout locks, pure option legs) showed that **over-filtering exits** (aggressive time-stops) hurt more than slightly looser entries on this universe.
+
+---
+
+## License / disclaimer
+
+Research and education only. Not investment advice. Past backtest results do not guarantee future performance.
+
