@@ -10,18 +10,17 @@ The **main strategy binary** is built from `momentumTrend.cpp` → `./momentum`
 ## Quick start
 
 ```bash
-# 1) Data (Futu OpenD must be running)
+You need to install FUTU openD first, and then sign in to your FUTU account. Keep the port default.
+# 1) Data (Futu OpenD must be running), you may skip this step to use the existing OHLC of the stocks stored in d_history and w_history
 python3 fetchHistory.py --list monitorCodeList.csv --full --days 400   # first time
 python3 fetchHistory.py --list monitorCodeList.csv --days 60           # daily refresh
 
 # 2) Build & run portfolio engine
 make momentum
 ./momentum
-# or one shot:
-make summarize-momentum
 
 # 3) Charts
-make plot
+python simplePlot.py
 ```
 
 Outputs land in **`testResult/`**:
