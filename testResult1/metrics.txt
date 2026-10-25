@@ -1,0 +1,11 @@
+HK Momentum Trend V4-LS Metrics
+Total Return: 15.7641%
+CAGR: 5.6343%
+Sharpe: 0.3967
+Sortino: 0.3599
+Max DD: -23.4513%
+Win Rate: 31.1475%
+Profit Factor: 1.4554
+Stock trades: 60 sum=1.6768
+Call trades: 1 sum=-0.0625
+Put trades: 0 sum=0.0000

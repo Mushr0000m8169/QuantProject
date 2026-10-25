@@ -1,0 +1,21 @@
+week weak , day weak
+if day ema5,13 cross
+	buy
+	if p<ema5 && p<boll
+		sell
+	if kdj cross:
+		sell
+week strong, day strong
+if day kdj cross
+	buy
+	if p<ema5 
+		sell
+	if kdj cross 
+		sell
+week strong, day weak
+if week kdj cross,
+	buy 
+
+
+
+
