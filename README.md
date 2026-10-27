@@ -211,7 +211,6 @@ Uses `testResult/PORTFOLIO_equity.csv` for the portfolio equity curve.
 |--------|--------|------|
 | `momentumTrend.cpp` | `momentum` | **Primary** portfolio equity strategy |
 | `backTester.cpp` | `backtester` | Experimental / alternate rules |
-| `sentimentMomentum.cpp` | `sentimentMomentum` | Sentiment variant (same output schema) |
 | `correlationTracker` + `correlationBacktester` | — | Pair trading → `correlationResult/` |
 
 To A/B test: change rules in one `.cpp`, keep output columns the same, point `OUT_DIR` if you need a separate result folder.
